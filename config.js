@@ -95,6 +95,11 @@ export const config = {
     maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
     maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
     loneCandidateMinDegen: u.loneCandidateMinDegen ?? 50, // degen score that lets a SOLO candidate deploy without a narrative
+    // rugcheck.xyz-derived holder-quality filters (null = disabled; applied only when rugcheck supplies the metric)
+    maxSniperPct:      u.maxSniperPct      ?? null,
+    maxSuspiciousPct:  u.maxSuspiciousPct  ?? null,
+    maxBundlePct:      u.maxBundlePct      ?? null,
+    convictionScoreMin: u.convictionScoreMin ?? null,
     allowedLaunchpads: u.allowedLaunchpads ?? [],  // allow-list launchpads, [] = no allow-list
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
@@ -323,6 +328,10 @@ export function reloadScreeningThresholds() {
     if (fresh.avoidPvpSymbols   !== undefined) s.avoidPvpSymbols = fresh.avoidPvpSymbols;
     if (fresh.blockPvpSymbols   !== undefined) s.blockPvpSymbols = fresh.blockPvpSymbols;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
+    if (fresh.maxSniperPct      !== undefined) s.maxSniperPct      = fresh.maxSniperPct;
+    if (fresh.maxSuspiciousPct  !== undefined) s.maxSuspiciousPct  = fresh.maxSuspiciousPct;
+    if (fresh.maxBundlePct      !== undefined) s.maxBundlePct      = fresh.maxBundlePct;
+    if (fresh.convictionScoreMin !== undefined) s.convictionScoreMin = fresh.convictionScoreMin;
     if (fresh.allowedLaunchpads !== undefined) s.allowedLaunchpads = fresh.allowedLaunchpads;
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads;
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
