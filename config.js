@@ -125,7 +125,8 @@ export const config = {
     repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 12,
     repeatDeployCooldownScope: u.repeatDeployCooldownScope ?? "token", // pool | token | both
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
-    lossCooldownHours: u.lossCooldownHours ?? 0, // hours to block re-entry after a losing close (0 = disabled)
+    lossCooldownHours:     u.lossCooldownHours     ?? 0,  // block re-entry after any losing close (0 = disabled)
+    stopLossCooldownHours: u.stopLossCooldownHours ?? 12, // block re-entry after stop-loss close
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
