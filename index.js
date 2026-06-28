@@ -36,6 +36,7 @@ import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnable
 import { appendDecision } from "./decision-log.js";
 
 import { REPO_ROOT, repoPath } from "./repo-root.js";
+import { evaluatePaperExits } from "./paper-positions.js";
 
 const entrypointPath = process.env.pm_exec_path || process.argv[1];
 const indexPath = fileURLToPath(import.meta.url);
@@ -822,7 +823,17 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }, oppMs);
   }
 
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
+  // Paper sim: evaluate exits every 5 minutes (DRY_RUN paper positions)
+  const paperSimTask = cron.schedule(`*/5 * * * *`, () => {
+    try {
+      const closed = evaluatePaperExits(config.management);
+      if (closed.length) log("paper_sim", `Auto-closed ${closed.length} paper position(s)`);
+    } catch (e) {
+      log("paper_sim_warn", `evaluatePaperExits error: ${e.message}`);
+    }
+  });
+
+  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog, paperSimTask];
   // Store interval refs so stopCronJobs can clear them
   _cronTasks._pnlPollInterval = pnlPollInterval;
   _cronTasks._opportunityPollInterval = opportunityPollInterval;

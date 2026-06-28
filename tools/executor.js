@@ -20,6 +20,7 @@ import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-bla
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
+import { open_paper_position, list_paper_positions } from "./simulator.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
 import { getRecentDecisions } from "../decision-log.js";
 import fs from "fs";
@@ -678,6 +679,29 @@ export async function executeTool(name, args) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
+        // BRIDGE: in dry-run, open a tracked paper position so paper trades accumulate.
+        const wd = result?.would_deploy;
+        if (result?.dry_run && wd?.lower_price > 0 && wd?.upper_price > 0) {
+          try {
+            const openPaper = ((await list_paper_positions()) || []).filter((p) => p.status === "open");
+            const atMax = openPaper.length >= config.risk.maxPositions;
+            const dupPool = openPaper.some((p) => p.pool_address === wd.pool_address);
+            const dupMint = wd.base_mint && openPaper.some((p) => p.base_mint && p.base_mint === wd.base_mint);
+            if (!atMax && !dupPool && !dupMint) {
+              const bal = await getWalletBalances().catch(() => ({ sol_price: 80 }));
+              const depositSol = Number((wd.amount_y ?? 0).toFixed(4));
+              const depositUsd = Number((depositSol * (bal.sol_price || 80)).toFixed(2));
+              if (depositSol > 0) {
+                const paper = await open_paper_position({ pool_address: wd.pool_address, deposit_amount: depositUsd, deposit_sol: depositSol, lower_price: wd.lower_price, upper_price: wd.upper_price, strategy_type: wd.strategy, base_mint: wd.base_mint });
+                log("paper_sim", `Bridged dry-run deploy -> paper position ${paper?.id || "?"} (◎${depositSol})`);
+              }
+            } else {
+              log("paper_sim", `Skip paper open: ${atMax ? "max positions" : dupPool ? "duplicate pool" : "duplicate base token"}`);
+            }
+          } catch (e) {
+            log("paper_sim_warn", `Failed to open paper position: ${e.message}`);
+          }
+        }
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
