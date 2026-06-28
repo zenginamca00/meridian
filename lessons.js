@@ -7,15 +7,13 @@
  */
 
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { log } from "./logger.js";
 import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./hivemind.js";
+import { repoPath } from "./repo-root.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
+const USER_CONFIG_PATH = repoPath("user-config.json");
 
-const LESSONS_FILE = "./lessons.json";
+const LESSONS_FILE = repoPath("lessons.json");
 const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
 const MAX_CHANGE_PER_STEP  = 0.20; // never shift a threshold more than 20% at once
 const PERFORMANCE_SIGNAL_FIELDS = [
@@ -29,6 +27,9 @@ const PERFORMANCE_SIGNAL_FIELDS = [
   "study_win_rate",
   "hive_consensus",
   "volatility",
+  "entry_mcap",
+  "entry_tvl",
+  "entry_volume",
 ];
 const MAX_MANUAL_LESSON_LENGTH = 400;
 
@@ -143,13 +144,10 @@ export async function recordPerformance(perf) {
   };
 
   data.performance.push(entry);
-  entry.gross_pnl_usd = entry.pnl_usd; // Meteora gross, before realized trading costs
 
-  // Derive and store a lesson. Tagged with lesson_id so it can be re-derived
-  // once realized gas+slip are known (see applyRealizedCosts).
+  // Derive and store a lesson
   const lesson = derivLesson(entry);
   if (lesson) {
-    entry.lesson_id = lesson.id;
     data.lessons.push(lesson);
     log("lessons", `New lesson: ${lesson.rule}`);
   }
@@ -177,23 +175,22 @@ export async function recordPerformance(perf) {
       close_reason: perf.close_reason,
       strategy: perf.strategy,
       volatility: perf.volatility,
+      entry_mcap: perf.entry_mcap,
+      entry_tvl: perf.entry_tvl,
+      entry_volume: perf.entry_volume,
+      exit_mcap: perf.exit_mcap,
+      exit_tvl: perf.exit_tvl,
+      exit_volume: perf.exit_volume,
     });
   }
 
-  // Evolve thresholds every 5 closed positions (opt-in via autoEvolveEnabled)
+  // Evolve thresholds every 5 closed positions
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
     const { config, reloadScreeningThresholds } = await import("./config.js");
-    if (config.management?.autoEvolveEnabled) {
-      const result = evolveThresholds(data.performance, config);
-      if (result?.changes && Object.keys(result.changes).length > 0) {
-        reloadScreeningThresholds();
-        log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
-        // Surface every auto-tune to the operator — never evolve silently
-        try {
-          const { notifyEvolve } = await import("./telegram.js");
-          await notifyEvolve(result);
-        } catch { /* notify best-effort */ }
-      }
+    const result = evolveThresholds(data.performance, config);
+    if (result?.changes && Object.keys(result.changes).length > 0) {
+      reloadScreeningThresholds();
+      log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
     }
 
     // Darwinian signal weight recalculation
@@ -234,8 +231,9 @@ function derivLesson(perf) {
 
   if (outcome === "neutral") return null; // nothing interesting to learn
 
-  // Build context description
-  const context = [
+  // Build context description with entry/exit market conditions
+  const fmtNum = (n) => n == null ? "?" : n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : String(Math.round(n));
+  const contextParts = [
     `${perf.pool_name}`,
     `strategy=${perf.strategy}`,
     `bin_step=${perf.bin_step}`,
@@ -243,7 +241,14 @@ function derivLesson(perf) {
     `fee_tvl_ratio=${perf.fee_tvl_ratio}`,
     `organic=${perf.organic_score}`,
     `bin_range=${typeof perf.bin_range === 'object' ? JSON.stringify(perf.bin_range) : perf.bin_range}`,
-  ].join(", ");
+  ];
+  if (perf.entry_mcap != null || perf.entry_tvl != null || perf.entry_volume != null) {
+    contextParts.push(`entry(mcap=${fmtNum(perf.entry_mcap)}, tvl=${fmtNum(perf.entry_tvl)}, vol=${fmtNum(perf.entry_volume)})`);
+  }
+  if (perf.exit_mcap != null || perf.exit_tvl != null || perf.exit_volume != null) {
+    contextParts.push(`exit(mcap=${fmtNum(perf.exit_mcap)}, tvl=${fmtNum(perf.exit_tvl)}, vol=${fmtNum(perf.exit_volume)})`);
+  }
+  const context = contextParts.join(", ");
 
   let rule = "";
 
@@ -252,7 +257,8 @@ function derivLesson(perf) {
       rule = `AVOID: ${perf.pool_name}-type pools (volatility=${perf.volatility}, bin_step=${perf.bin_step}) with strategy="${perf.strategy}" — went OOR ${100 - perf.range_efficiency}% of the time. Consider wider bin_range or bid_ask strategy.`;
       tags.push("oor", perf.strategy, `volatility_${Math.round(perf.volatility)}`);
     } else if (perf.range_efficiency > 80 && outcome === "good") {
-      rule = `PREFER: ${perf.pool_name}-type pools (volatility=${perf.volatility}, bin_step=${perf.bin_step}) with strategy="${perf.strategy}" — ${perf.range_efficiency}% in-range efficiency, PnL +${perf.pnl_pct}%.`;
+      const entryNote = perf.entry_mcap != null ? ` Entry: mcap=${fmtNum(perf.entry_mcap)}, tvl=${fmtNum(perf.entry_tvl)}, vol=${fmtNum(perf.entry_volume)}.` : "";
+      rule = `PREFER: ${perf.pool_name}-type pools (volatility=${perf.volatility}, bin_step=${perf.bin_step}) with strategy="${perf.strategy}" — ${perf.range_efficiency}% in-range efficiency, PnL +${perf.pnl_pct}%.${entryNote}`;
       tags.push("efficient", perf.strategy);
     } else if (outcome === "bad" && perf.close_reason?.includes("volume")) {
       rule = `AVOID: Pools with fee_tvl_ratio=${perf.fee_tvl_ratio} that showed volume collapse — fees evaporated quickly. Minimum sustained volume check needed before deploying.`;
@@ -304,59 +310,14 @@ function derivLesson(perf) {
     range_efficiency: perf.range_efficiency,
     close_reason: perf.close_reason,
     pool: perf.pool,
+    entry_mcap: perf.entry_mcap ?? null,
+    entry_tvl: perf.entry_tvl ?? null,
+    entry_volume: perf.entry_volume ?? null,
+    exit_mcap: perf.exit_mcap ?? null,
+    exit_tvl: perf.exit_tvl ?? null,
+    exit_volume: perf.exit_volume ?? null,
     created_at: new Date().toISOString(),
   };
-}
-
-/**
- * Apply REALIZED trading costs (gas + swap slippage) to the most recent
- * performance record for a position, AFTER the close swap has executed.
- *
- * The learning signal would otherwise use Meteora's optimistic gross PnL —
- * which marks break-even-after-cost pools as "good". This subtracts the real
- * costs and re-derives the lesson from honest net, so lessons + evolution
- * stop reinforcing pools that only look profitable before fees.
- *
- * Idempotent: a record is only adjusted once.
- *
- * @param {Object} opts
- * @param {string} opts.position   - Position address (matches recordPerformance)
- * @param {number} opts.costsUsd   - Total realized costs (gas + slip) in USD
- */
-export function applyRealizedCosts({ position, costsUsd } = {}) {
-  if (!position || !(costsUsd > 0)) return null;
-  const data = load();
-  for (let i = data.performance.length - 1; i >= 0; i--) {
-    const e = data.performance[i];
-    if (e.position !== position) continue;
-    if (e.costs_applied) return null; // already adjusted — stay idempotent
-
-    const gross = e.gross_pnl_usd != null ? e.gross_pnl_usd : e.pnl_usd;
-    const netUsd = gross - costsUsd;
-    e.gross_pnl_usd = Math.round(gross * 100) / 100;
-    e.costs_usd     = Math.round(costsUsd * 100) / 100;
-    e.pnl_usd       = Math.round(netUsd * 100) / 100;
-    e.pnl_pct       = e.initial_value_usd > 0
-      ? Math.round((netUsd / e.initial_value_usd) * 10000) / 100
-      : e.pnl_pct;
-    e.costs_applied = true;
-
-    // Drop the optimistic auto-lesson and re-derive from honest net
-    if (e.lesson_id) {
-      data.lessons = data.lessons.filter((l) => l.id !== e.lesson_id);
-      e.lesson_id = null;
-    }
-    const fresh = derivLesson(e);
-    if (fresh) {
-      e.lesson_id = fresh.id;
-      data.lessons.push(fresh);
-    }
-
-    save(data);
-    log("lessons", `Realized costs $${costsUsd.toFixed(2)} applied to ${e.pool_name || e.pool}: gross $${gross.toFixed(2)} → net $${e.pnl_usd.toFixed(2)} (${e.pnl_pct}%)`);
-    return { gross_pnl_usd: e.gross_pnl_usd, net_pnl_usd: e.pnl_usd, pnl_pct: e.pnl_pct };
-  }
-  return null;
 }
 
 // ─── Adaptive Threshold Evolution ──────────────────────────────
@@ -382,14 +343,14 @@ export function evolveThresholds(perfData, config) {
   const changes   = {};
   const rationale = {};
 
-  // ── 1. minFeeActiveTvlRatio ───────────────────────────────────
-  // Raise the fee/TVL floor if low-fee pools consistently underperform on NET.
+  // ── 1. minFeeActiveTvlRatio ────────────────────────────────────
+  // Raise the floor if low-fee pools consistently underperform.
   {
     const winnerFees = winners.map((p) => p.fee_tvl_ratio).filter(isFiniteNum);
     const loserFees  = losers.map((p) => p.fee_tvl_ratio).filter(isFiniteNum);
     const current    = config.screening.minFeeActiveTvlRatio;
 
-    if (isFiniteNum(current) && winnerFees.length >= 2) {
+    if (winnerFees.length >= 2) {
       // Minimum fee/TVL among winners — we know pools below this don't work for us
       const minWinnerFee = Math.min(...winnerFees);
       if (minWinnerFee > current * 1.2) {
@@ -403,9 +364,9 @@ export function evolveThresholds(perfData, config) {
       }
     }
 
-    if (isFiniteNum(current) && loserFees.length >= 2) {
-      // If losers all had high fee/TVL, that's noise (pumps then crash) — don't raise min.
-      // But if losers had low fee/TVL and winners higher, raise the floor.
+    if (loserFees.length >= 2) {
+      // If losers all had high fee/TVL, that's noise (pumps then crash) — don't raise min
+      // But if losers had low fee/TVL, raise min
       const maxLoserFee = Math.max(...loserFees);
       if (maxLoserFee < current * 1.5 && winnerFees.length > 0) {
         const minWinnerFee = Math.min(...winnerFees);
@@ -463,7 +424,7 @@ export function evolveThresholds(perfData, config) {
   // Apply to live config object immediately
   const s = config.screening;
   if (changes.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = changes.minFeeActiveTvlRatio;
-  if (changes.minOrganic           != null) s.minOrganic           = changes.minOrganic;
+  if (changes.minOrganic       != null) s.minOrganic       = changes.minOrganic;
 
   // Log a lesson summarizing the evolution
   const data = load();
@@ -588,17 +549,6 @@ export function listLessons({ role = null, pinned = null, tag = null, limit = 30
       created_at: l.created_at?.slice(0, 10),
     })),
   };
-}
-
-/**
- * Remove a lesson by ID.
- */
-export function removeLesson(id) {
-  const data = load();
-  const before = data.lessons.length;
-  data.lessons = data.lessons.filter((l) => l.id !== id);
-  save(data);
-  return before - data.lessons.length;
 }
 
 /**

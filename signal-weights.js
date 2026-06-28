@@ -12,7 +12,9 @@
 import fs from "fs";
 import { log } from "./logger.js";
 
-const WEIGHTS_FILE = "./signal-weights.json";
+import { repoPath } from "./repo-root.js";
+
+const WEIGHTS_FILE = repoPath("signal-weights.json");
 
 // ─── Signal Definitions ─────────────────────────────────────────
 
@@ -27,6 +29,9 @@ const SIGNAL_NAMES = [
   "study_win_rate",
   "hive_consensus",
   "volatility",
+  "entry_mcap",
+  "entry_tvl",
+  "entry_volume",
 ];
 
 const DEFAULT_WEIGHTS = Object.fromEntries(SIGNAL_NAMES.map((s) => [s, 1.0]));
@@ -49,7 +54,7 @@ const CATEGORICAL_SIGNALS = new Set(["narrative_quality"]);
 
 // ─── Persistence ─────────────────────────────────────────────────
 
-export function loadWeights() {
+function loadWeights() {
   if (!fs.existsSync(WEIGHTS_FILE)) {
     const initial = {
       weights: { ...DEFAULT_WEIGHTS },
@@ -74,7 +79,7 @@ export function loadWeights() {
   }
 }
 
-export function saveWeights(data) {
+function saveWeights(data) {
   try {
     fs.writeFileSync(WEIGHTS_FILE, JSON.stringify(data, null, 2));
   } catch (err) {

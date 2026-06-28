@@ -4,8 +4,8 @@ import { buildSystemPrompt } from "./prompt.js";
 import { executeTool } from "./tools/executor.js";
 import { tools } from "./tools/definitions.js";
 
-const MANAGER_TOOLS  = new Set(["close_position", "claim_fees", "swap_token", "get_position_pnl", "get_my_positions", "get_wallet_balance", "open_paper_position", "get_paper_position", "close_paper_position", "list_paper_positions"]);
-const SCREENER_TOOLS = new Set(["deploy_position", "get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "get_wallet_balance", "get_my_positions", "open_paper_position", "get_paper_position", "list_paper_positions"]);
+const MANAGER_TOOLS  = new Set(["close_position", "claim_fees", "swap_token", "get_position_pnl", "get_my_positions", "get_wallet_balance"]);
+const SCREENER_TOOLS = new Set(["deploy_position", "get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "get_wallet_balance", "get_my_positions"]);
 const GENERAL_INTENT_ONLY_TOOLS = new Set([
   "self_update",
   "update_config",
@@ -99,7 +99,7 @@ const client = new OpenAI({
   timeout: 5 * 60 * 1000,
 });
 
-const DEFAULT_MODEL = process.env.LLM_MODEL || config.llm.generalModel || "openrouter/healer-alpha";
+const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
 
 const MUTATING_TOOL_INTENTS = /\b(deploy|open position|add liquidity|lp into|invest in|close|exit|withdraw|remove liquidity|claim|harvest|collect|swap|convert|sell|exchange|block|unblock|blacklist|add smart wallet|remove smart wallet|add wallet|remove wallet|pin|unpin|clear lesson|add lesson|set active strategy|remove strategy|add strategy|set |change |update |self.?update|pull latest|git pull|update yourself)\b/i;
 const LIVE_DATA_TOOL_INTENTS = /\b(balance|wallet|position|portfolio|pnl|yield|range|show positions|open positions|screen|candidate|find pool|search|research|analyze|check pool|token holders|narrative|study top|top lpers?|lp behavior|who.?s lping|performance|history|stats|report|list smart wallets|list blacklist|list blocked deployers|list lessons)\b/i;
@@ -142,6 +142,11 @@ function isToolChoiceRequiredError(error) {
   return /tool_choice/i.test(message) && /required/i.test(message);
 }
 
+function isThinkingModeToolChoiceError(error) {
+  const message = String(error?.message || error?.error?.message || error || "");
+  return /thinking mode does not support/i.test(message) && /tool_choice/i.test(message);
+}
+
 /**
  * Core ReAct agent loop.
  *
@@ -179,6 +184,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const mustUseRealTool = shouldRequireRealToolUse(goal, agentType, interactive);
   let sawToolCall = false;
   let noToolRetryCount = 0;
+  // Stays true for the whole run once a thinking-mode provider rejects tool_choice
+  let omitToolChoice = false;
 
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
@@ -201,13 +208,10 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             model: usedModel,
             messages,
             tools: getToolsForRole(agentType, goal),
-            tool_choice: toolChoice,
             temperature: config.llm.temperature,
             max_tokens: maxOutputTokens ?? config.llm.maxTokens,
           };
-          // OpenRouter-only provider routing (cheapest/cache-friendly provider).
-          const usingOpenRouter = !process.env.LLM_BASE_URL || /openrouter\.ai/.test(process.env.LLM_BASE_URL);
-          if (config.llm.provider && usingOpenRouter) reqParams.provider = config.llm.provider;
+          if (!omitToolChoice) reqParams.tool_choice = toolChoice;
           response = await client.chat.completions.create(reqParams);
         } catch (error) {
           if (providerMode === "system" && isSystemRoleError(error)) {
@@ -220,6 +224,12 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           if (toolChoice === "required" && isToolChoiceRequiredError(error)) {
             toolChoice = "auto";
             log("agent", "Provider rejected tool_choice=required — retrying with tool_choice=auto");
+            attempt -= 1;
+            continue;
+          }
+          if (!omitToolChoice && isThinkingModeToolChoiceError(error)) {
+            omitToolChoice = true;
+            log("agent", "Provider thinking mode does not support tool_choice — retrying without it");
             attempt -= 1;
             continue;
           }
@@ -246,8 +256,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         throw new Error(`API returned no choices: ${response.error?.message || JSON.stringify(response)}`);
       }
       const msg = response.choices[0].message;
-      // Repair malformed tool call JSON before pushing to history —
-      // the API rejects the next request if history contains invalid JSON args
+      const invalidToolArgErrors = new Map();
+      // Keep tool-call history API-valid, but never execute unrecoverable args.
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
           if (tc.function?.arguments) {
@@ -259,7 +269,9 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
                 log("warn", `Repaired malformed JSON args for ${tc.function.name}`);
               } catch {
                 tc.function.arguments = "{}";
-                log("error", `Could not repair JSON args for ${tc.function.name} — cleared to {}`);
+                const error = `Invalid tool arguments for ${tc.function.name}`;
+                invalidToolArgErrors.set(tc.id, error);
+                log("error", `${error}: could not repair JSON`);
               }
             }
           }
@@ -304,6 +316,20 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         const functionName = toolCall.function.name.replace(/<.*$/, "").trim();
         let functionArgs;
 
+        if (invalidToolArgErrors.has(toolCall.id)) {
+          const result = {
+            success: false,
+            error: invalidToolArgErrors.get(toolCall.id),
+            blocked: true,
+          };
+          await onToolFinish?.({ name: functionName, args: {}, result, success: false, step });
+          return {
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result),
+          };
+        }
+
         try {
           functionArgs = JSON.parse(toolCall.function.arguments);
         } catch {
@@ -312,7 +338,17 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             log("warn", `Repaired malformed JSON args for ${functionName}`);
           } catch (parseError) {
             log("error", `Failed to parse args for ${functionName}: ${parseError.message}`);
-            functionArgs = {};
+            const result = {
+              success: false,
+              error: `Invalid tool arguments for ${functionName}`,
+              blocked: true,
+            };
+            await onToolFinish?.({ name: functionName, args: {}, result, success: false, step });
+            return {
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify(result),
+            };
           }
         }
 
