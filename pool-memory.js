@@ -219,6 +219,17 @@ export function recordPoolDeploy(poolAddress, deployData) {
     }
   }
 
+  const lossCooldownHours = Number(config.management.lossCooldownHours ?? 0);
+  if (lossCooldownHours > 0 && deploy.pnl_pct != null && deploy.pnl_pct < 0) {
+    const reason = `loss close (${Number(deploy.pnl_pct).toFixed(1)}%)`;
+    const poolCooldownUntil = setPoolCooldown(entry, lossCooldownHours, reason);
+    log("pool-memory", `Loss cooldown set for ${entry.name} until ${poolCooldownUntil} (${reason})`);
+    if (entry.base_mint) {
+      const mintCooldownUntil = setBaseMintCooldown(db, entry.base_mint, lossCooldownHours, reason);
+      if (mintCooldownUntil) log("pool-memory", `Loss cooldown set for token ${entry.base_mint.slice(0, 8)} until ${mintCooldownUntil}`);
+    }
+  }
+
   save(db);
   log("pool-memory", `Recorded deploy for ${entry.name} (${poolAddress.slice(0, 8)}): PnL ${deploy.pnl_pct}%`);
 }
