@@ -13,7 +13,9 @@ const DEFAULT_HIVEMIND_API_KEY = DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY;
 const u = fs.existsSync(USER_CONFIG_PATH)
   ? JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"))
   : {};
-export const MIN_SAFE_BINS_BELOW = 35;
+// Hard floor on deploy range width (bins). Default 35; overridable per-instance
+// via MIN_SAFE_BINS_BELOW env for tight-bin experiments. Never below 8.
+export const MIN_SAFE_BINS_BELOW = Math.max(8, Number(process.env.MIN_SAFE_BINS_BELOW) || 35);
 
 function numericConfig(value) {
   const n = Number(value);

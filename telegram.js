@@ -6,6 +6,7 @@ const USER_CONFIG_PATH = repoPath("user-config.json");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
 const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
+const THREAD_ID = process.env.TELEGRAM_THREAD_ID ? Number(process.env.TELEGRAM_THREAD_ID) : null;
 const ALLOWED_USER_IDS = new Set(
   String(process.env.TELEGRAM_ALLOWED_USER_IDS || "")
     .split(",")
@@ -99,10 +100,11 @@ export function isEnabled() {
 async function postTelegram(method, body) {
   if (!TOKEN || !chatId) return null;
   try {
+    const threadExtra = THREAD_ID && method === "sendMessage" ? { message_thread_id: THREAD_ID } : {};
     const res = await fetch(`${BASE}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, ...body }),
+      body: JSON.stringify({ chat_id: chatId, ...threadExtra, ...body }),
     });
     if (!res.ok) {
       const err = await res.text();
@@ -461,8 +463,9 @@ export function stopPolling() {
 }
 
 // ─── Notification helpers ────────────────────────────────────────
-export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, rangeCoverage, binStep, baseFee }) {
+export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, rangeCoverage, binStep, baseFee, paper }) {
   if (hasActiveLiveMessage()) return;
+  const isDryRun = process.env.DRY_RUN === "true";
   const priceStr = priceRange
     ? `Price range: ${priceRange.min < 0.0001 ? priceRange.min.toExponential(3) : priceRange.min.toFixed(6)} – ${priceRange.max < 0.0001 ? priceRange.max.toExponential(3) : priceRange.max.toFixed(6)}\n`
     : "";
@@ -472,14 +475,20 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   const poolStr = (binStep || baseFee)
     ? `Bin step: ${binStep ?? "?"}  |  Base fee: ${baseFee != null ? baseFee + "%" : "?"}\n`
     : "";
+  const positionStr = position
+    ? `Position: <code>${position.slice(0, 8)}...</code>\n`
+    : isDryRun ? `Position: <i>paper trade</i>\n` : "";
+  const txStr = tx
+    ? `Tx: <code>${tx.slice(0, 16)}...</code>`
+    : isDryRun ? `Tx: <i>paper trade</i>` : "";
   await sendHTML(
-    `✅ <b>Deployed</b> ${pair}\n` +
+    `${isDryRun ? "📄" : "✅"} <b>Deployed${isDryRun ? " (paper)" : ""}</b> ${pair}\n` +
     `Amount: ${amountSol} SOL\n` +
     priceStr +
     coverageStr +
     poolStr +
-    `Position: <code>${position?.slice(0, 8)}...</code>\n` +
-    `Tx: <code>${tx?.slice(0, 16)}...</code>`
+    positionStr +
+    txStr
   );
 }
 

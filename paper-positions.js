@@ -11,9 +11,14 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { recordPerformance } from "./lessons.js";
 
 const STATE_FILE = "./paper-positions.json";
 const DLMM_API  = "https://dlmm.datapi.meteora.ag";
+
+// Non-refundable Meteora round-trip gas (deploy + close + fee claim + base->SOL swap).
+// Committed once per closed trade. Mirror of GAS_SOL in paper-stats.mjs — keep in sync.
+const ROUND_TRIP_GAS_SOL = 0.006;
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
@@ -376,6 +381,43 @@ export function closePaperPosition(id) {
   return formatSummary(pos);
 }
 
+// ─── lessons.performance bridge ───────────────────────────────────────────────
+
+/**
+ * Map a paper position into the perf-record shape lessons.recordPerformance() expects.
+ * Keeps the sync code in one place so field names / units stay aligned.
+ */
+function buildPerfRecord(pos) {
+  const minutesHeld = pos.entry_timestamp && pos.last_candle_timestamp
+    ? Math.max(0, Math.floor((pos.last_candle_timestamp - pos.entry_timestamp) / 60))
+    : 0;
+  const minutesInRange = Math.max(0, Math.floor((pos.candles_in_range || 0) * 5));
+  // Round-trip gas in USD, priced off this position's own SOL/USD ratio.
+  const solUsd  = (pos.deposit_sol > 0 && pos.deposit_amount > 0)
+    ? pos.deposit_amount / pos.deposit_sol
+    : 0;
+  const gas_usd = +(ROUND_TRIP_GAS_SOL * solUsd).toFixed(4);
+  return {
+    position:          pos.id,
+    pool:              pos.pool_address,
+    pool_name:         pos.pool_name,
+    base_mint:         pos.base_mint ?? null,
+    strategy:          pos.strategy_type,
+    bin_step:          pos.bin_step ?? null,
+    amount_sol:        pos.deposit_sol,
+    initial_value_usd: pos.deposit_amount,
+    final_value_usd:   pos.deposit_amount + (pos.net_pnl || 0),
+    fees_earned_usd:   pos.fees_earned || 0,
+    gas_usd,
+    fees_earned_sol:   pos.fees_earned_sol ?? null,
+    minutes_held:      minutesHeld,
+    minutes_in_range:  minutesInRange,
+    close_reason:      pos.close_reason,
+    deployed_at:       pos.opened_at,
+    closed_at:         pos.closed_at,
+  };
+}
+
 /**
  * Apply exit rules (SL / TP / trailing / OOR) to all open paper positions and
  * auto-close any that trigger. Mirrors the live deterministic exit logic so
@@ -436,6 +478,8 @@ export function evaluatePaperExits(mgmtConfig = {}) {
       pos.close_reason = reason;
       closed.push(formatSummary(pos));
       log("paper_sim", `Auto-closed ${pos.id}: ${reason} | netPnL=$${pos.net_pnl} (${pnlPct.toFixed(1)}%)`);
+      // Sync to lessons.performance so dashboard history reflects paper closes
+      void recordPerformance(buildPerfRecord(pos));
     }
   }
 

@@ -57,15 +57,34 @@ function getJupiterReferralParams() {
  * Returns USD-denominated values provided by Helius.
  */
 export async function getWalletBalances() {
+  // Paper/dry-run: substitute a simulated SOL balance (PAPER_WALLET_SOL) so the
+  // agent isn't gated by the real on-chain balance. Real price is still used when
+  // the Helius fetch succeeds; on any failure the paper balance is still surfaced
+  // so paper deploys never block on wallet SOL or a Helius outage.
+  const paperSol  = process.env.DRY_RUN === "true" ? Number(process.env.PAPER_WALLET_SOL) : NaN;
+  const usePaper  = Number.isFinite(paperSol) && paperSol > 0;
+  const paperOnly = (solPrice = 0, wallet = null) => ({
+    wallet,
+    sol: paperSol,
+    sol_price: Math.round(solPrice * 100) / 100,
+    sol_usd: Math.round(paperSol * solPrice * 100) / 100,
+    usdc: 0,
+    tokens: [],
+    total_usd: Math.round(paperSol * solPrice * 100) / 100,
+    paper: true,
+  });
+
   let walletAddress;
   try {
     walletAddress = getWallet().publicKey.toString();
   } catch {
+    if (usePaper) return paperOnly(0, null);
     return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Wallet not configured" };
   }
 
   const HELIUS_KEY = process.env.HELIUS_API_KEY;
   if (!HELIUS_KEY) {
+    if (usePaper) return paperOnly(0, walletAddress);
     log("wallet_error", "HELIUS_API_KEY not set in .env");
     return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Helius API key missing" };
   }
@@ -100,15 +119,17 @@ export async function getWalletBalances() {
 
     return {
       wallet: walletAddress,
-      sol: Math.round(solBalance * 1e6) / 1e6,
+      sol: usePaper ? paperSol : Math.round(solBalance * 1e6) / 1e6,
       sol_price: Math.round(solPrice * 100) / 100,
-      sol_usd: Math.round(solUsd * 100) / 100,
+      sol_usd: usePaper ? Math.round(paperSol * solPrice * 100) / 100 : Math.round(solUsd * 100) / 100,
       usdc: Math.round(usdcBalance * 100) / 100,
       tokens: enrichedTokens,
       total_usd: Math.round((data.totalUsdValue || 0) * 100) / 100,
+      ...(usePaper ? { paper: true } : {}),
     };
   } catch (error) {
     log("wallet_error", error.message);
+    if (usePaper) return paperOnly(0, walletAddress);
     return {
       wallet: walletAddress,
       sol: 0,

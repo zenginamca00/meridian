@@ -37,7 +37,7 @@ import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnable
 import { appendDecision } from "./decision-log.js";
 
 import { REPO_ROOT, repoPath } from "./repo-root.js";
-import { evaluatePaperExits } from "./paper-positions.js";
+import { evaluatePaperExits, tickPaperPositions } from "./paper-positions.js";
 
 const entrypointPath = process.env.pm_exec_path || process.argv[1];
 const indexPath = fileURLToPath(import.meta.url);
@@ -864,7 +864,12 @@ Summarize the current portfolio health, total fees earned, and performance of al
   }
 
   // Paper sim: evaluate exits every 5 minutes (DRY_RUN paper positions)
-  const paperSimTask = cron.schedule(`*/5 * * * *`, () => {
+  const paperSimTask = cron.schedule(`*/5 * * * *`, async () => {
+    try {
+      await tickPaperPositions();
+    } catch (e) {
+      log("paper_sim_warn", `tickPaperPositions error: ${e.message}`);
+    }
     try {
       const closed = evaluatePaperExits(config.management);
       if (closed.length) log("paper_sim", `Auto-closed ${closed.length} paper position(s)`);

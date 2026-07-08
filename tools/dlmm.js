@@ -577,13 +577,21 @@ export async function deployPosition({
   }
 
   if (process.env.DRY_RUN === "true") {
+    const lowerPrice = Number(getPriceOfBinByBinId(activeBin.binId - activeBinsBelow, actualBinStep).toString());
+    const upperPrice = isSingleSidedSol
+      ? activePrice
+      : Number(getPriceOfBinByBinId(activeBin.binId + activeBinsAbove, actualBinStep).toString());
     return {
       dry_run: true,
       would_deploy: {
         pool_address,
+
         strategy: activeStrategy,
         bins_below: activeBinsBelow,
         bins_above: activeBinsAbove,
+        lower_price: lowerPrice,
+        upper_price: upperPrice,
+        base_mint: baseMint,
         downside_pct: downside_pct ?? null,
         upside_pct: upside_pct ?? null,
         amount_x: finalAmountX,

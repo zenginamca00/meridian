@@ -88,6 +88,7 @@ function buildSignalSnapshot(perf) {
  * @param {number} perf.organic_score  - Token organic score at deploy time
  * @param {number} perf.amount_sol     - Amount deployed
  * @param {number} perf.fees_earned_usd - Total fees earned
+ * @param {number} perf.gas_usd         - Round-trip gas cost in USD (deducted from net PnL)
  * @param {number} perf.final_value_usd - Value when closed
  * @param {number} perf.initial_value_usd - Value when opened
  * @param {number} perf.minutes_in_range  - Total minutes position was in range
@@ -113,7 +114,7 @@ export async function recordPerformance(perf) {
     return;
   }
 
-  const pnl_usd = (perf.final_value_usd + perf.fees_earned_usd) - perf.initial_value_usd;
+  const pnl_usd = (perf.final_value_usd + perf.fees_earned_usd) - perf.initial_value_usd - (perf.gas_usd || 0);
   const pnl_pct = perf.initial_value_usd > 0
     ? (pnl_usd / perf.initial_value_usd) * 100
     : 0;
