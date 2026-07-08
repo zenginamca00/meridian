@@ -406,7 +406,11 @@ function buildPerfRecord(pos) {
     bin_step:          pos.bin_step ?? null,
     amount_sol:        pos.deposit_sol,
     initial_value_usd: pos.deposit_amount,
-    final_value_usd:   pos.deposit_amount + (pos.net_pnl || 0),
+    // Principal value at close, EXCLUDING fees. net_pnl = fees + IL, so subtract
+    // fees to leave deposit + IL. recordPerformance() re-adds fees_earned_usd once
+    // — matches the live path (final = withdrawals, fees tracked separately). This
+    // is what fixes the fee double-count (was: deposit + net_pnl, fees baked in).
+    final_value_usd:   pos.deposit_amount + (pos.net_pnl || 0) - (pos.fees_earned || 0),
     fees_earned_usd:   pos.fees_earned || 0,
     gas_usd,
     fees_earned_sol:   pos.fees_earned_sol ?? null,
