@@ -152,6 +152,9 @@ export const config = {
     volatilitySpikeRatio:  u.volatilitySpikeRatio  ?? 3,     // close if current vol > N× deploy vol, null = disabled
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
+    // Auto-evolve screening thresholds from closed-position history (lessons.js).
+    // false = manual threshold overrides stick permanently.
+    autoEvolveEnabled:     u.autoEvolveEnabled     ?? true,
   },
 
   // ─── Strategy Mapping ───────────────────

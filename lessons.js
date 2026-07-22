@@ -185,13 +185,16 @@ export async function recordPerformance(perf) {
     });
   }
 
-  // Evolve thresholds every 5 closed positions
+  // Evolve thresholds every 5 closed positions, unless explicitly disabled
+  // via autoEvolveEnabled: false (lets a manual threshold override actually stick).
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
     const { config, reloadScreeningThresholds } = await import("./config.js");
-    const result = evolveThresholds(data.performance, config);
-    if (result?.changes && Object.keys(result.changes).length > 0) {
-      reloadScreeningThresholds();
-      log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
+    if (config.management.autoEvolveEnabled !== false) {
+      const result = evolveThresholds(data.performance, config);
+      if (result?.changes && Object.keys(result.changes).length > 0) {
+        reloadScreeningThresholds();
+        log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
+      }
     }
 
     // Darwinian signal weight recalculation
