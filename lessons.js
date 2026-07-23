@@ -185,8 +185,9 @@ export async function recordPerformance(perf) {
     });
   }
 
-  // Evolve thresholds every 5 closed positions, unless explicitly disabled
-  // via autoEvolveEnabled: false (lets a manual threshold override actually stick).
+  // Evolve thresholds + signal weights every 5 closed positions, unless explicitly
+  // disabled via autoEvolveEnabled: false (lets a manual threshold override stick,
+  // and stops the Darwin signal-weight recalculation too — same on/off switch).
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
     const { config, reloadScreeningThresholds } = await import("./config.js");
     if (config.management.autoEvolveEnabled !== false) {
@@ -195,14 +196,14 @@ export async function recordPerformance(perf) {
         reloadScreeningThresholds();
         log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
       }
-    }
 
-    // Darwinian signal weight recalculation
-    if (config.darwin?.enabled) {
-      const { recalculateWeights } = await import("./signal-weights.js");
-      const wResult = recalculateWeights(data.performance, config);
-      if (wResult.changes.length > 0) {
-        log("evolve", `Darwin: adjusted ${wResult.changes.length} signal weight(s)`);
+      // Darwinian signal weight recalculation
+      if (config.darwin?.enabled) {
+        const { recalculateWeights } = await import("./signal-weights.js");
+        const wResult = recalculateWeights(data.performance, config);
+        if (wResult.changes.length > 0) {
+          log("evolve", `Darwin: adjusted ${wResult.changes.length} signal weight(s)`);
+        }
       }
     }
   }
