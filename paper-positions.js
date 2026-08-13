@@ -93,9 +93,18 @@ async function fetchPoolConfig(poolAddress) {
  * Fetch 5m candles from startTimestamp (unix seconds) to now.
  * Returns only candles newer than startTimestamp.
  */
+// API rejects windows wider than roughly 8-12h ("time range too large"). If a
+// tick is ever missed, fromTimestamp stops advancing while "now" keeps moving,
+// so the requested window only grows — once it crosses the API's limit, every
+// future request fails too and the position's candle feed freezes forever.
+// Clamping the lookback lets a stuck feed self-heal (sacrificing the candles
+// in the unrecoverable gap) instead of staying broken permanently.
+const MAX_LOOKBACK_SEC = 6 * 3600;
+
 async function fetchNewCandles(poolAddress, fromTimestamp) {
   const end = Math.floor(Date.now() / 1000);
-  const url  = `${DLMM_API}/pools/${poolAddress}/ohlcv?timeframe=5m&start_time=${fromTimestamp}&end_time=${end}`;
+  const clampedFrom = Math.max(fromTimestamp, end - MAX_LOOKBACK_SEC);
+  const url  = `${DLMM_API}/pools/${poolAddress}/ohlcv?timeframe=5m&start_time=${clampedFrom}&end_time=${end}`;
   const res  = await fetch(url);
   if (!res.ok) throw new Error(`OHLCV fetch failed: ${res.status}`);
   const data = await res.json();
@@ -464,10 +473,15 @@ export function evaluatePaperExits(mgmtConfig = {}) {
     } else if (
       pos.oor_since_ts != null &&
       mgmtConfig.outOfRangeWaitMinutes != null &&
+      pos.last_price < pos.lower_price &&
       (pos.last_candle_timestamp - pos.oor_since_ts) >= mgmtConfig.outOfRangeWaitMinutes * 60
     ) {
+      // Downside OOR only: price fell below range, position is now 100% base
+      // token (real dump risk, needs a swap to exit). Upside OOR (price above
+      // range = position already 100% SOL, zero further downside from here)
+      // is deliberately excluded — no urgency to force-close a safe position.
       const mins = Math.floor((pos.last_candle_timestamp - pos.oor_since_ts) / 60);
-      reason = `out of range ${mins}m (>= ${mgmtConfig.outOfRangeWaitMinutes}m)`;
+      reason = `out of range (down) ${mins}m (>= ${mgmtConfig.outOfRangeWaitMinutes}m)`;
     } else if (
       mgmtConfig.staleCloseMinutes != null && mgmtConfig.staleCloseMinutes > 0 &&
       ageMinutes >= mgmtConfig.staleCloseMinutes &&
