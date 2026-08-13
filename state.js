@@ -387,10 +387,20 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   if (changed) save(state);
 
   // ── Stop loss ──────────────────────────────────────────────────
+  // `immediate` asks the poller to skip the usual multi-tick confirmation.
+  // Confirmation exists to filter a single bad price read, but a move this far
+  // past the threshold cannot come from one: readings with a missing price or
+  // missing cost basis are already rejected upstream via pnl_pct_suspicious, so
+  // a false positive would need a price that is present *and* badly wrong.
+  // Waiting another tick there only guarantees exiting lower.
   if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct) {
+    const margin = Number(mgmtConfig.fastExitMarginPct ?? 0);
+    const immediate = margin > 0 && currentPnlPct <= mgmtConfig.stopLossPct - margin;
     return {
       action: "STOP_LOSS",
-      reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
+      reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`
+        + (immediate ? ` — FAST PATH (${margin}%+ past threshold, skipping confirmation)` : ""),
+      immediate,
     };
   }
 
@@ -398,10 +408,13 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   if (!pnl_pct_suspicious && pos.trailing_active) {
     const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
     if (dropFromPeak >= mgmtConfig.trailingDropPct) {
+      const mult = Number(mgmtConfig.fastExitDropMultiplier ?? 0);
+      const immediate = mult > 0 && dropFromPeak >= mgmtConfig.trailingDropPct * mult;
       return {
         action: "TRAILING_TP",
-        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${mgmtConfig.trailingDropPct}%)`,
-        needs_confirmation: true,
+        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${mgmtConfig.trailingDropPct}%)`
+          + (immediate ? ` — FAST PATH (${mult}x drop, skipping confirmation)` : ""),
+        immediate,
         peak_pnl_pct: pos.peak_pnl_pct,
         current_pnl_pct: currentPnlPct,
         drop_from_peak_pct: dropFromPeak,

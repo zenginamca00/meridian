@@ -794,11 +794,14 @@ Summarize the current portfolio health, total fees earned, and performance of al
         if (exit) { signal = exit.action; reason = exit.reason; }
         else if (closeRule) { signal = `RULE_${closeRule.rule}`; reason = closeRule.reason; rule = closeRule.rule; }
 
-        // Require N consecutive confirming ticks before acting.
-        const { fire } = registerExitSignal(p.position, signal, confirmTicks);
+        // Require N consecutive confirming ticks before acting — except when the
+        // rule flagged the move as too large to be a bad tick, where the extra
+        // tick costs a poll interval and buys nothing.
+        const ticksNeeded = exit?.immediate ? 1 : confirmTicks;
+        const { fire } = registerExitSignal(p.position, signal, ticksNeeded);
         if (!signal || !fire) continue;
 
-        log("state", `[PnL poll] ${signal} confirmed (${confirmTicks} ticks): ${p.pair} — ${reason} — closing directly`);
+        log("state", `[PnL poll] ${signal} confirmed (${ticksNeeded} tick${ticksNeeded === 1 ? "" : "s"}): ${p.pair} — ${reason} — closing directly`);
         // Hold the management lock so the cron cycle can't double-act on this position.
         _managementBusy = true;
         try {

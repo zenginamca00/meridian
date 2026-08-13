@@ -143,6 +143,12 @@ export const config = {
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
+    // Fast path — skip the multi-tick exit confirmation when a move is too large
+    // to be a bad tick. Costs a poll interval otherwise; see KYOKO-SOL, which ran
+    // +3% → +11% → -2% inside 21s and gave the peak back while confirming.
+    // Set either to 0 to disable that fast path and always confirm.
+    fastExitMarginPct:        u.fastExitMarginPct        ?? 5,  // stop loss: fire at once this many points past stopLossPct
+    fastExitDropMultiplier:   u.fastExitDropMultiplier   ?? 3,  // trailing TP: fire at once at this multiple of trailingDropPct
     // Position age exit — close stale positions
     maxPositionAgeMinutes: u.maxPositionAgeMinutes ?? 1440, // 24h default, null = disabled
     maxPositionAgePnlPct:  u.maxPositionAgePnlPct  ?? 2,    // only close aged positions below this PnL %

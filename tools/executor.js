@@ -409,6 +409,9 @@ const toolMap = {
       pnlConfirmTicks: ["pnl", "confirmTicks"],
       // on-chain tx tuning
       priorityFeeMicroLamports: ["tx", "priorityFeeMicroLamports"],
+      // fast-path exit confirmation
+      fastExitMarginPct: ["management", "fastExitMarginPct"],
+      fastExitDropMultiplier: ["management", "fastExitDropMultiplier"],
       // opportunity poller (interval/enabled changes apply on next restart)
       opportunityPollEnabled: ["opportunity", "enabled"],
       opportunityPollIntervalSec: ["opportunity", "pollIntervalSec"],
