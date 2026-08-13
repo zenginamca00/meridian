@@ -256,6 +256,11 @@ export const config = {
     // At a 3s poll cadence, 2 ticks ≈ 3-6s — filters single-tick noise without the
     // old fixed 15s setTimeout recheck.
     confirmTicks: Number(u.pnlConfirmTicks ?? 2),
+    // Write every tick to logs/pnl-trace/*.jsonl. The normal log only records
+    // rising peaks, so the way down — where exits are actually decided — is
+    // invisible, and tuning confirmTicks / trailingDropPct / the fast-path
+    // thresholds is guesswork. ~2MB/day at a 2s tick.
+    traceEnabled: u.pnlTraceEnabled ?? true,
   },
 
   // ─── Opportunity poller (catches strong pools between screening cycles) ──

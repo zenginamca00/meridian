@@ -35,6 +35,7 @@ import {
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, confirmPeak, registerExitSignal } from "./state.js";
+import { tracePnlTick } from "./pnl-trace.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote, getPoolMemoryStats } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
@@ -786,6 +787,10 @@ Summarize the current portfolio health, total fees earned, and performance of al
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
         confirmPeak(p.position, p.pnl_pct, confirmTicks);
+
+        // Record the tick before any exit logic runs, so the trace covers the way
+        // down too — that is the half the normal log never sees.
+        if (config.pnl.traceEnabled) tracePnlTick(p, getTrackedPosition(p.position));
 
         // Detect an exit signal this tick (rule-based exits, then deterministic close rules).
         const exit = updatePnlAndCheckExits(p.position, p, config.management);

@@ -214,6 +214,7 @@ function normalizeConfigValue(key, value) {
     "blockPvpSymbols",
     "autoSwapAfterClaim",
     "skipPreCloseClaim",
+    "pnlTraceEnabled",
     "trailingTakeProfit",
     "solMode",
     "darwinEnabled",
@@ -408,6 +409,7 @@ const toolMap = {
       pnlSanityMaxDiffPct: ["management", "pnlSanityMaxDiffPct"],
       // pnl poller
       pnlConfirmTicks: ["pnl", "confirmTicks"],
+      pnlTraceEnabled: ["pnl", "traceEnabled"],
       // on-chain tx tuning
       priorityFeeMicroLamports: ["tx", "priorityFeeMicroLamports"],
       // fast-path exit confirmation
