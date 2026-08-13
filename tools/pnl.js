@@ -151,6 +151,7 @@ function mapEntries(map) {
 
 // ─── Build the shaped position object (matches getMyPositions output) ──
 function buildPosition(f, prices, solUsd, meteora, solMode) {
+  const tracked = getTrackedPosition(f.position);
   const priceX = f.baseMint ? (prices[f.baseMint] ?? 0) : 0;
 
   const xHuman = safeNum(f.xRaw) / 10 ** f.decX;
@@ -167,8 +168,25 @@ function buildPosition(f, prices, solUsd, meteora, solMode) {
   const depositsSol = safeNum(meteora?.allTimeDeposits?.total?.sol);
   const withdrawUsd = safeNum(meteora?.allTimeWithdrawals?.total?.usd);
   const withdrawSol = safeNum(meteora?.allTimeWithdrawals?.total?.sol);
-  const claimedUsd = safeNum(meteora?.allTimeFees?.total?.usd);
-  const claimedSol = safeNum(meteora?.allTimeFees?.total?.sol);
+  // Claimed fees, floored by what we recorded ourselves at claim time.
+  //
+  // PnL counts claimable + claimed, so claiming should net out. It doesn't:
+  // `claimable` is on-chain and refreshes every tick, while `claimed` comes from
+  // the Meteora API behind a depositCacheTtlSec cache. In between, the fees are
+  // in neither term and PnL sags by the whole claimed amount — enough to trip
+  // trailing TP and close a position that never actually fell.
+  //
+  // max() rather than a replacement: our record is a floor (we know at least
+  // this much was claimed), and Meteora's all-time figure wins once it catches
+  // up and includes anything claimed outside this process.
+  const claimedApiUsd = safeNum(meteora?.allTimeFees?.total?.usd);
+  const claimedApiSol = safeNum(meteora?.allTimeFees?.total?.sol);
+  const localClaimedX = safeNum(tracked?.claimed_raw_x) / 10 ** f.decX;
+  const localClaimedY = safeNum(tracked?.claimed_raw_y) / 10 ** f.decY;
+  const localClaimedUsd = localClaimedX * priceX + localClaimedY * (solUsd ?? 0);
+  const localClaimedSol = solUsd ? localClaimedUsd / solUsd : localClaimedY;
+  const claimedUsd = Math.max(claimedApiUsd, localClaimedUsd);
+  const claimedSol = Math.max(claimedApiSol, localClaimedSol);
 
   const pnlUsd = balancesUsd + withdrawUsd + claimableUsd + claimedUsd - depositsUsd;
   const pnlSol = balancesSol + withdrawSol + claimableSol + claimedSol - depositsSol;
@@ -204,7 +222,6 @@ function buildPosition(f, prices, solUsd, meteora, solMode) {
   if (inRange) markInRange(f.position);
   else markOutOfRange(f.position);
 
-  const tracked = getTrackedPosition(f.position);
   const ageFromState = tracked?.deployed_at
     ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000)
     : null;

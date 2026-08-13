@@ -161,12 +161,32 @@ export function minutesOutOfRange(position_address) {
 /**
  * Record a fee claim event.
  */
-export function recordClaim(position_address, fees_usd) {
+export function recordClaim(position_address, fees_usd, claimedRaw = null) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
   pos.last_claim_at = new Date().toISOString();
   pos.total_fees_claimed_usd = (pos.total_fees_claimed_usd || 0) + (fees_usd || 0);
+
+  // Cumulative raw token amounts claimed over this position's life.
+  //
+  // PnL counts claimable + claimed fees, so a claim should be neutral — the same
+  // value just moves between the two. It isn't, because they refresh at
+  // different speeds: `claimable` is read on-chain every tick, while `claimed`
+  // comes from the Meteora API behind a depositCacheTtlSec cache. For that
+  // window the fees are in neither figure, PnL drops by the full claimed amount,
+  // and trailing TP reads it as a crash — the bot closes a healthy position
+  // because it claimed its own fees (CALLOOOR-SOL: +3.2% -> -1.1% in one tick,
+  // the same tick unclaimed fees went $3.59 -> $0).
+  //
+  // Stored raw rather than in USD so it can be valued at current prices later,
+  // and kept cumulative so it can be compared directly against Meteora's
+  // all-time figure.
+  if (claimedRaw) {
+    pos.claimed_raw_x = (pos.claimed_raw_x || 0) + (Number(claimedRaw.x) || 0);
+    pos.claimed_raw_y = (pos.claimed_raw_y || 0) + (Number(claimedRaw.y) || 0);
+  }
+
   pos.notes.push(`Claimed ~$${fees_usd?.toFixed(2) || "?"} fees at ${pos.last_claim_at}`);
   save(state);
 }

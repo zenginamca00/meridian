@@ -1516,7 +1516,16 @@ export async function claimFees({ position_address }) {
     }
     log("claim", `SUCCESS txs: ${txHashes.join(", ")}`);
     _positionsCacheAt = 0; // invalidate cache after claim
-    recordClaim(position_address);
+
+    // Record what was actually claimed so PnL can bridge the window where the
+    // fees have left `claimable` on-chain but not yet appeared in Meteora's
+    // cached `claimed` figure. positionData was read immediately before the
+    // claim, so its pending feeX/feeY is exactly what these txs collected.
+    const claimedFees = positionData?.positionData ?? {};
+    recordClaim(position_address, undefined, {
+      x: safeNum(claimedFees.feeX?.toString?.() ?? claimedFees.feeX),
+      y: safeNum(claimedFees.feeY?.toString?.() ?? claimedFees.feeY),
+    });
 
     return { success: true, position: position_address, txs: txHashes, base_mint: pool.lbPair.tokenXMint.toString() };
   } catch (error) {
