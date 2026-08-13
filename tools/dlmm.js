@@ -1799,24 +1799,43 @@ export async function closePosition({ position_address, reason }) {
     const closeTxHashes = [];
 
     // ─── Step 1: Claim Fees (to clear account state) ───────────
+    // Step 2 already passes shouldClaimAndClose, so this separate claim is a
+    // workaround, added in ea30806 to "bypass SDK Anchor issues" back in March.
+    // SDK 1.9.4 (what we run) lists a fix for removeLiquidity+shouldClaimAndClose
+    // failing to close when bins hold unclaimed fees, which reads like the same
+    // bug — so skipPreCloseClaim lets us drop the extra round trip (measured
+    // median 1.22s, ~half of what a close costs after the relay removal).
+    //
+    // It is opt-in because the commit message is too vague to be certain it is
+    // the same bug, and the 79 historical single-tx closes all had no fees to
+    // claim, so they never exercised the risky path. If the combined close does
+    // fail, we fall back to claim-first inline rather than leaving the position
+    // open for the poller to retry a cycle later.
+    const skipPreCloseClaim = config.management.skipPreCloseClaim === true;
     const recentlyClaimed = tracked?.last_claim_at && (Date.now() - new Date(tracked.last_claim_at).getTime()) < 60_000;
+
+    const claimBeforeClose = async () => {
+      const positionData = await pool.getPosition(positionPubKey);
+      const claimTxs = await pool.claimSwapFee({
+        owner: wallet.publicKey,
+        position: positionData,
+      });
+      if (claimTxs && claimTxs.length > 0) {
+        for (const tx of claimTxs) {
+          claimTxHashes.push(await sendTx(tx, [wallet]));
+        }
+        log("close", `Step 1 OK (claim only): ${claimTxHashes.join(", ")}`);
+      }
+    };
+
     try {
-      if (recentlyClaimed) {
+      if (skipPreCloseClaim) {
+        log("close", `Step 1: Skipping claim — folded into the close (skipPreCloseClaim)`);
+      } else if (recentlyClaimed) {
         log("close", `Step 1: Skipping claim — fees already claimed ${Math.round((Date.now() - new Date(tracked.last_claim_at).getTime()) / 1000)}s ago`);
       } else {
         log("close", `Step 1: Claiming fees for ${position_address}`);
-        const positionData = await pool.getPosition(positionPubKey);
-        const claimTxs = await pool.claimSwapFee({
-          owner: wallet.publicKey,
-          position: positionData,
-        });
-        if (claimTxs && claimTxs.length > 0) {
-          for (const tx of claimTxs) {
-            const claimHash = await sendTx(tx, [wallet]);
-            claimTxHashes.push(claimHash);
-          }
-          log("close", `Step 1 OK (claim only): ${claimTxHashes.join(", ")}`);
-        }
+        await claimBeforeClose();
       }
     } catch (e) {
       log("close_warn", `Step 1 (Claim) failed or nothing to claim: ${e.message}`);
@@ -1841,18 +1860,29 @@ export async function closePosition({ position_address, reason }) {
 
     if (hasLiquidity) {
       log("close", `Step 2: Removing liquidity and closing account`);
-      const closeTx = await pool.removeLiquidity({
-        user: wallet.publicKey,
-        position: positionPubKey,
-        fromBinId: closeFromBinId,
-        toBinId: closeToBinId,
-        bps: new BN(10000),
-        shouldClaimAndClose: true,
-      });
+      const removeAndClose = async () => {
+        const closeTx = await pool.removeLiquidity({
+          user: wallet.publicKey,
+          position: positionPubKey,
+          fromBinId: closeFromBinId,
+          toBinId: closeToBinId,
+          bps: new BN(10000),
+          shouldClaimAndClose: true,
+        });
+        for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
+          closeTxHashes.push(await sendTx(tx, [wallet]));
+        }
+      };
 
-      for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
-        const txHash = await sendTx(tx, [wallet]);
-        closeTxHashes.push(txHash);
+      try {
+        await removeAndClose();
+      } catch (e) {
+        // Only the skip path can be rescued: if the claim already ran, the
+        // combined close was not what broke and retrying it changes nothing.
+        if (!skipPreCloseClaim || recentlyClaimed) throw e;
+        log("close_warn", `Combined close failed (${e.message}) — retrying claim-first`);
+        await claimBeforeClose();
+        await removeAndClose();
       }
     } else {
       log("close", `Step 2: No position liquidity detected, closing account`);

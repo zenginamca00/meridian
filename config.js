@@ -149,6 +149,11 @@ export const config = {
     // Set either to 0 to disable that fast path and always confirm.
     fastExitMarginPct:        u.fastExitMarginPct        ?? 5,  // stop loss: fire at once this many points past stopLossPct
     fastExitDropMultiplier:   u.fastExitDropMultiplier   ?? 3,  // trailing TP: fire at once at this multiple of trailingDropPct
+    // Fold the pre-close claim into the close itself (removeLiquidity already
+    // passes shouldClaimAndClose). Saves a whole confirmed transaction, median
+    // 1.22s. Off by default: it undoes a deliberate SDK workaround, and falls
+    // back to claim-first inline if the combined close fails.
+    skipPreCloseClaim:        u.skipPreCloseClaim        ?? false,
     // Position age exit — close stale positions
     maxPositionAgeMinutes: u.maxPositionAgeMinutes ?? 1440, // 24h default, null = disabled
     maxPositionAgePnlPct:  u.maxPositionAgePnlPct  ?? 2,    // only close aged positions below this PnL %

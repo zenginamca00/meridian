@@ -213,6 +213,7 @@ function normalizeConfigValue(key, value) {
     "avoidPvpSymbols",
     "blockPvpSymbols",
     "autoSwapAfterClaim",
+    "skipPreCloseClaim",
     "trailingTakeProfit",
     "solMode",
     "darwinEnabled",
@@ -412,6 +413,7 @@ const toolMap = {
       // fast-path exit confirmation
       fastExitMarginPct: ["management", "fastExitMarginPct"],
       fastExitDropMultiplier: ["management", "fastExitDropMultiplier"],
+      skipPreCloseClaim: ["management", "skipPreCloseClaim"],
       // opportunity poller (interval/enabled changes apply on next restart)
       opportunityPollEnabled: ["opportunity", "enabled"],
       opportunityPollIntervalSec: ["opportunity", "pollIntervalSec"],
