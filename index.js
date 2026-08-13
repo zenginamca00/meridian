@@ -364,6 +364,7 @@ export async function runManagementCycle({ silent = false } = {}) {
         }
       }
     }
+    drainTelegramQueue().catch(() => {});
   }
   return mgmtReport;
 }
@@ -724,6 +725,7 @@ IMPORTANT:
         else sendMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
       }
     }
+    drainTelegramQueue().catch(() => {});
   }
   return screenReport;
 }
@@ -753,6 +755,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
       log("cron_error", `Health check failed: ${error.message}`);
     } finally {
       _managementBusy = false;
+      drainTelegramQueue().catch(() => {});
     }
   });
 
