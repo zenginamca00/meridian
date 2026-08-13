@@ -495,6 +495,52 @@ export function recallForPool(poolAddress) {
 }
 
 /**
+ * Tool handler: clear_pool_cooldown
+ * Manually lifts an active cooldown (pool-level and/or base-mint-level) before
+ * it naturally expires. Operator override — use sparingly, cooldowns exist to
+ * stop revenge-trading / over-concentration into a single token.
+ */
+export function clearPoolCooldown({ pool_address, reason = "" }) {
+  if (!pool_address) return { error: "pool_address required" };
+
+  const db = load();
+  const entry = db[pool_address];
+  if (!entry) return { error: `No pool-memory entry for ${pool_address}` };
+
+  const hadPoolCooldown = !!entry.cooldown_until;
+  const hadMintCooldown = !!entry.base_mint_cooldown_until;
+  if (!hadPoolCooldown && !hadMintCooldown) {
+    return { cleared: false, pool_address, name: entry.name, message: "No active cooldown on this pool." };
+  }
+
+  const clearedPool = entry.cooldown_until || null;
+  delete entry.cooldown_until;
+  delete entry.cooldown_reason;
+
+  let clearedMintFor = [];
+  if (entry.base_mint) {
+    for (const [addr, e] of Object.entries(db)) {
+      if (e?.base_mint === entry.base_mint && e.base_mint_cooldown_until) {
+        clearedMintFor.push(addr);
+        delete e.base_mint_cooldown_until;
+        delete e.base_mint_cooldown_reason;
+      }
+    }
+  }
+
+  save(db);
+  log("pool-memory", `Cooldown cleared for ${entry.name} (${pool_address.slice(0, 8)})${reason ? ` — ${reason}` : ""}`);
+  return {
+    cleared: true,
+    pool_address,
+    name: entry.name,
+    pool_cooldown_cleared: !!clearedPool,
+    base_mint_cooldown_cleared: clearedMintFor.length > 0,
+    affected_pools: clearedMintFor.length,
+  };
+}
+
+/**
  * Tool handler: add_pool_note
  * Agent can annotate a pool with a freeform note.
  */

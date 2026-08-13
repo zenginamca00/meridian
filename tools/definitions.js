@@ -1011,6 +1011,32 @@ Use when you observe something worth remembering about a specific pool:
     }
   },
 
+  {
+    type: "function",
+    function: {
+      name: "clear_pool_cooldown",
+      description: `Manually lift an active cooldown on a pool (and its base token) before it naturally expires.
+Cooldowns exist to stop revenge-trading / over-concentration into a single token after a loss or a winning
+streak (repeatDeployCooldown, lossCooldown, oorCooldown) — this is an explicit operator override.
+Only use when the user directly asks to bypass a cooldown for a specific pool. Does not touch config
+thresholds (use update_config for that) — only clears the already-set cooldown timestamp for this one pool.`,
+      parameters: {
+        type: "object",
+        properties: {
+          pool_address: {
+            type: "string",
+            description: "Pool address whose cooldown should be cleared"
+          },
+          reason: {
+            type: "string",
+            description: "Why the cooldown is being manually lifted (for the audit log)"
+          }
+        },
+        required: ["pool_address"]
+      }
+    }
+  },
+
   // ─── Token Blacklist ────────────────────────────────────────────
 
   {
