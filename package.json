@@ -14,11 +14,11 @@
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:restart": "pm2 restart meridian --update-env",
     "pm2:logs": "pm2 logs meridian --lines 100",
-    "dev": "DRY_RUN=true node index.js",
+    "dev": "cross-env DRY_RUN=true node index.js",
     "test": "npm run test:syntax",
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
     "test:screen": "node test/test-screening.js",
-    "test:agent": "DRY_RUN=true node test/test-agent.js",
+    "test:agent": "cross-env DRY_RUN=true node test/test-agent.js",
     "postinstall": "node scripts/patch-anchor.js"
   },
   "knip": {
@@ -34,7 +34,11 @@
     "dotenv": "^17.3.1",
     "jsonrepair": "^3.13.3",
     "node-cron": "^3.0.3",
-    "openai": "^4.73.0"
+    "openai": "^4.73.0",
+    "undici": "^8.10.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
   },
   "engines": {
     "node": ">=18.0.0"
