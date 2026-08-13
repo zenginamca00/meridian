@@ -1,4 +1,13 @@
 import "./envcrypt.js";
+import dns from "node:dns";
+import { Agent, setGlobalDispatcher } from "undici";
+// This host has no working IPv6 route — Node's default dual-stack (Happy Eyeballs)
+// lookup wastes time on IPv6 attempts that always fail (ENETUNREACH), which can
+// drag down or fail otherwise-healthy IPv4 fetches (Telegram, Jupiter, etc).
+// dns.setDefaultResultOrder alone doesn't reliably stop undici's own fetch() from
+// still trying IPv6, so force the global fetch dispatcher to IPv4-only sockets too.
+dns.setDefaultResultOrder("ipv4first");
+setGlobalDispatcher(new Agent({ connect: { family: 4 } }));
 import cron from "node-cron";
 import readline from "readline";
 import path from "path";
