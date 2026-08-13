@@ -1,4 +1,5 @@
 import {
+  ComputeBudgetProgram,
   Connection,
   Keypair,
   PublicKey,
@@ -85,6 +86,28 @@ function getConnection() {
     _connection = new Connection(process.env.RPC_URL, "confirmed");
   }
   return _connection;
+}
+
+/**
+ * Prepend a priority-fee bid to a transaction, then send it.
+ *
+ * Validators order their queue by priority fee, and that queue is per-account —
+ * so the bid matters most exactly when the pool we are exiting is the hot
+ * account, i.e. while it dumps. Base fee alone leaves us at the back of that
+ * queue at the worst possible moment.
+ *
+ * Only SetComputeUnitPrice is added: the DLMM SDK already attaches a
+ * SetComputeUnitLimit sized from simulation (measured: 149,925 for a close that
+ * consumes 99,925), and a second limit instruction would be a duplicate.
+ * Legacy Transaction objects are all the SDK returns here; anything else is
+ * passed through untouched rather than guessed at.
+ */
+function sendTx(tx, signers) {
+  const microLamports = Number(config.tx?.priorityFeeMicroLamports ?? 0);
+  if (microLamports > 0 && tx instanceof Transaction) {
+    tx.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports }));
+  }
+  return sendAndConfirmTransaction(getConnection(), tx, signers);
 }
 
 function getWallet() {
@@ -1789,7 +1812,7 @@ export async function closePosition({ position_address, reason }) {
         });
         if (claimTxs && claimTxs.length > 0) {
           for (const tx of claimTxs) {
-            const claimHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
+            const claimHash = await sendTx(tx, [wallet]);
             claimTxHashes.push(claimHash);
           }
           log("close", `Step 1 OK (claim only): ${claimTxHashes.join(", ")}`);
@@ -1828,7 +1851,7 @@ export async function closePosition({ position_address, reason }) {
       });
 
       for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
-        const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
+        const txHash = await sendTx(tx, [wallet]);
         closeTxHashes.push(txHash);
       }
     } else {
@@ -1837,7 +1860,7 @@ export async function closePosition({ position_address, reason }) {
         owner: wallet.publicKey,
         position: { publicKey: positionPubKey },
       });
-      const txHash = await sendAndConfirmTransaction(getConnection(), closeTx, [wallet]);
+      const txHash = await sendTx(closeTx, [wallet]);
       closeTxHashes.push(txHash);
     }
     const txHashes = [...claimTxHashes, ...closeTxHashes];

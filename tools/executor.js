@@ -407,6 +407,8 @@ const toolMap = {
       pnlSanityMaxDiffPct: ["management", "pnlSanityMaxDiffPct"],
       // pnl poller
       pnlConfirmTicks: ["pnl", "confirmTicks"],
+      // on-chain tx tuning
+      priorityFeeMicroLamports: ["tx", "priorityFeeMicroLamports"],
       // opportunity poller (interval/enabled changes apply on next restart)
       opportunityPollEnabled: ["opportunity", "enabled"],
       opportunityPollIntervalSec: ["opportunity", "pollIntervalSec"],

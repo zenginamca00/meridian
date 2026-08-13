@@ -215,6 +215,23 @@ export const config = {
     lpAgentRelayEnabled: u.lpAgentRelayEnabled ?? false,
   },
 
+  // ─── On-chain transaction tuning ────────────────────────────
+  tx: {
+    // Priority fee bid, in micro-lamports per compute unit. Only the *price*
+    // is set here — the DLMM SDK already attaches an accurate SetComputeUnitLimit
+    // (measured by simulation), so adding our own limit would duplicate it.
+    //
+    // Measured on the DLMM program over 150 recent slots: p50=0, p90=6,
+    // p99=6343, max=14182. Two thirds of slots need nothing at all, but the
+    // tail spikes hard — and that tail is exactly when we are trying to exit a
+    // pool that is dumping. The default sits ~3.5x above the observed max
+    // because the cost of overbidding is negligible: at a 149,925 CU limit,
+    // 50,000 uL/CU is ~0.0000075 SOL (~$0.0006) per transaction.
+    //
+    // Set to 0 to disable and go back to base-fee-only.
+    priorityFeeMicroLamports: Number(u.priorityFeeMicroLamports ?? 50000),
+  },
+
   // ─── PnL fetcher / poller (public infra: RPC + Meteora deposits + Jupiter) ──
   pnl: {
     // Live position value comes from on-chain reads on this RPC.
