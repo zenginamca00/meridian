@@ -261,6 +261,13 @@ export const config = {
     // invisible, and tuning confirmTicks / trailingDropPct / the fast-path
     // thresholds is guesswork. ~2MB/day at a 2s tick.
     traceEnabled: u.pnlTraceEnabled ?? true,
+    // Live PnL alerts to Telegram, so a position can be closed by hand before the
+    // 10-minute report would even mention it. Throttled by both a minimum move
+    // since the last alert and a floor on time between alerts — at a 2s poll,
+    // either one alone would spam.
+    alertEnabled:        u.pnlAlertEnabled        ?? false,
+    alertMovePct:        u.pnlAlertMovePct        ?? 2,   // poin PnL sejak alert terakhir
+    alertMinIntervalSec: u.pnlAlertMinIntervalSec ?? 60,  // jeda minimum per posisi
   },
 
   // ─── Opportunity poller (catches strong pools between screening cycles) ──

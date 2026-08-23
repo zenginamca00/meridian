@@ -518,6 +518,29 @@ export async function notifyOutOfRange({ pair, minutesOOR }) {
   );
 }
 
+/**
+ * Live PnL move alert, fired from the fast poller.
+ *
+ * The management report only lands every 10 minutes, which is far too slow to
+ * act on: measured trailing-TP exits overshoot their threshold by 10+ points in
+ * the worst 19% of cases, because price gaps between polls. This puts the number
+ * in front of the operator while there is still something to decide, with the
+ * exact command needed to act on it.
+ */
+export async function notifyPnlMove({ pair, index, pnlPct, peakPct, prevPct, valueUsd, unclaimedUsd, inRange }) {
+  if (hasActiveLiveMessage()) return;
+  const s = (n) => (n >= 0 ? "+" : "");
+  const arrow = pnlPct >= (prevPct ?? pnlPct) ? "📈" : "📉";
+  const giveback = peakPct != null && peakPct > pnlPct
+    ? ` (dari puncak ${s(peakPct)}${peakPct.toFixed(2)}%, turun ${(peakPct - pnlPct).toFixed(2)})`
+    : "";
+  await sendHTML(
+    `${arrow} <b>${pair}</b> ${s(pnlPct)}${pnlPct.toFixed(2)}%${giveback}\n` +
+    `Nilai $${(valueUsd ?? 0).toFixed(2)} · fee blm diklaim $${(unclaimedUsd ?? 0).toFixed(2)} · ${inRange ? "in range" : "OUT of range"}\n` +
+    `<code>/close ${index}</code> untuk tutup sekarang`
+  );
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }

@@ -215,6 +215,7 @@ function normalizeConfigValue(key, value) {
     "autoSwapAfterClaim",
     "skipPreCloseClaim",
     "pnlTraceEnabled",
+    "pnlAlertEnabled",
     "trailingTakeProfit",
     "solMode",
     "darwinEnabled",
@@ -410,6 +411,9 @@ const toolMap = {
       // pnl poller
       pnlConfirmTicks: ["pnl", "confirmTicks"],
       pnlTraceEnabled: ["pnl", "traceEnabled"],
+      pnlAlertEnabled: ["pnl", "alertEnabled"],
+      pnlAlertMovePct: ["pnl", "alertMovePct"],
+      pnlAlertMinIntervalSec: ["pnl", "alertMinIntervalSec"],
       // on-chain tx tuning
       priorityFeeMicroLamports: ["tx", "priorityFeeMicroLamports"],
       // fast-path exit confirmation

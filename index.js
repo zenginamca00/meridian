@@ -30,6 +30,7 @@ import {
   editMessageWithButtons,
   answerCallbackQuery,
   notifyOutOfRange,
+  notifyPnlMove,
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
@@ -731,6 +732,57 @@ IMPORTANT:
   return screenReport;
 }
 
+// Last PnL we alerted on, per position. Module-level rather than persisted: on a
+// restart the first tick of each position simply re-baselines, which is the
+// behaviour we want anyway.
+const _pnlAlertState = new Map();
+
+/**
+ * Push a Telegram alert when a position's PnL has moved enough to be worth a
+ * look, so the operator can close by hand if they disagree with the bot.
+ *
+ * The scheduled report only lands every 10 minutes. That is useless for the case
+ * that actually hurts: in the worst 19% of trailing-TP exits price gapped 10+
+ * points past the threshold between polls, and by report time the decision is
+ * long gone.
+ *
+ * Alerts are throttled two ways — a minimum move since the *last alert* (not
+ * since the last tick, so a slow grind still eventually reports) and a hard
+ * floor on time between alerts per position. Without both, a 2s poll on a
+ * volatile pool would fire tens of messages a minute.
+ */
+function maybeAlertPnlMove(p, index) {
+  const cfg = config.pnl;
+  if (!cfg.alertEnabled) return;
+  if (p.pnl_pct == null || p.pnl_pct_suspicious) return;
+
+  const movePct = Number(cfg.alertMovePct ?? 2);
+  const minGapMs = Number(cfg.alertMinIntervalSec ?? 60) * 1000;
+  const now = Date.now();
+  const prev = _pnlAlertState.get(p.position);
+
+  // First sighting: record a baseline, don't alert — otherwise every deploy and
+  // every restart would fire a message saying nothing has happened yet.
+  if (!prev) {
+    _pnlAlertState.set(p.position, { pnl: p.pnl_pct, at: now });
+    return;
+  }
+  if (Math.abs(p.pnl_pct - prev.pnl) < movePct) return;
+  if (now - prev.at < minGapMs) return;
+
+  _pnlAlertState.set(p.position, { pnl: p.pnl_pct, at: now });
+  notifyPnlMove({
+    pair: p.pair,
+    index,
+    pnlPct: p.pnl_pct,
+    peakPct: getTrackedPosition(p.position)?.peak_pnl_pct ?? null,
+    prevPct: prev.pnl,
+    valueUsd: p.total_value_usd,
+    unclaimedUsd: p.unclaimed_fees_usd,
+    inRange: p.in_range,
+  }).catch(() => {});
+}
+
 export function startCronJobs() {
   stopCronJobs(); // stop any running tasks before (re)starting
 
@@ -771,6 +823,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
   }, { timezone: 'UTC' });
 
   // Fast PnL poller — the real-time exit path between management cycles, no LLM.
+  // (see maybeAlertPnlMove below the poller for the operator-facing alert)
   // Runs on public infra (RPC + Jupiter + Meteora deposits) so it can poll aggressively.
   // Exits require `confirmTicks` consecutive confirming polls (registerExitSignal) so a
   // single noisy tick can't close a position; confirmed exits close DIRECTLY here (no
@@ -791,6 +844,8 @@ Summarize the current portfolio health, total fees earned, and performance of al
         // Record the tick before any exit logic runs, so the trace covers the way
         // down too — that is the half the normal log never sees.
         if (config.pnl.traceEnabled) tracePnlTick(p, getTrackedPosition(p.position));
+
+        maybeAlertPnlMove(p, result.positions.indexOf(p) + 1);
 
         // Detect an exit signal this tick (rule-based exits, then deterministic close rules).
         const exit = updatePnlAndCheckExits(p.position, p, config.management);
