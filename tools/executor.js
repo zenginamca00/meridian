@@ -41,7 +41,7 @@ const TIMEFRAME_MINUTES = {
   "24h": 1440,
 };
 import { log, logAction } from "../logger.js";
-import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
+import { notifyDeploy, notifyClose, notifySwap, sendPositionCard } from "../telegram.js";
 
 function numberOrNull(value) {
   const n = Number(value);
@@ -726,7 +726,24 @@ export async function executeTool(name, args) {
             log("paper_sim_warn", `Failed to open paper position: ${e.message}`);
           }
         }
-        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        const deployedPair = result.pool_name || args.pool_name || args.pool_address?.slice(0, 8);
+        const deployedSol = args.amount_y ?? args.amount_sol ?? 0;
+        notifyDeploy({ pair: deployedPair, amountSol: deployedSol, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        // Interactive card alongside the plain notification — the poller keeps it
+        // updated and its buttons are how a position gets closed by hand.
+        sendPositionCard({
+          pair: deployedPair,
+          pool: args.pool_address,
+          position: result.position,
+          deployAmount: deployedSol,
+          pnlPct: 0,
+          inRange: true,
+          mode: process.env.DRY_RUN === "true" ? "dry_run" : "live",
+          strategy: args.strategy || config.strategy?.strategy,
+          tpPct: config.management?.takeProfitPct,
+          slPct: config.management?.stopLossPct,
+          trailingEnabled: config.management?.trailingTakeProfit,
+        }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
         // Note low-yield closes in pool memory so screener avoids redeploying

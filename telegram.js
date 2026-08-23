@@ -510,6 +510,114 @@ export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOu
   );
 }
 
+// ─── Position Cards ──────────────────────────────────────────────
+// One live message per open position, edited in place instead of posting a new
+// message each time — so the operator watches a single card whose numbers move,
+// with Close/TP/SL/Trail one tap away.
+//
+// Restored from d625059; it was lost in a merge from upstream rather than
+// deliberately removed (no commit ever deletes it — the string simply stops
+// existing). Rebuilt here against the current close path, since finalizeClose()
+// no longer exists.
+//
+// pool_address → { messageId, paperId, positionAddress, pair, deployAmount }
+const _positionCards = new Map();
+
+function buildPositionCard({
+  pair, pool, position, deployAmount, pnlPct, pnlUsd,
+  inRange, mode, strategy, tpPct, slPct, trailingEnabled, status = "open",
+}) {
+  const sign = (pnlPct ?? 0) >= 0 ? "+" : "";
+  const pnlStr = pnlPct != null ? `${sign}${Number(pnlPct).toFixed(2)}%` : "?%";
+  // Sign off pnlUsd itself, not pnlPct: the original took abs() with pnlPct's
+  // sign, so a losing position rendered "($18.28)" — the minus silently dropped.
+  const usdSign = Number(pnlUsd) < 0 ? "-" : "+";
+  const pnlUsdStr = pnlUsd != null ? ` (${usdSign}$${Math.abs(Number(pnlUsd)).toFixed(2)})` : "";
+  const rangeStr = inRange == null ? "" : (inRange ? " · 🟢" : " · 🔴 OOR");
+  const modeLabel = (mode === "dry_run" || mode === true) ? "dry_run" : "live";
+  const statusLabel = status === "closed" ? "🔒 closed" : "🟢 open";
+  const posShort = position ? `<code>${position.slice(0, 8)}…</code>` : "";
+  const poolId = pool || "";
+
+  const lines = [
+    `🎯 <b>${pair || "Position"}</b>`,
+    `Status: ${statusLabel} · Mode: ${modeLabel} · Strategy: ${strategy || "?"}`,
+    `Size: ◎${deployAmount ?? "?"} · PnL: <b>${pnlStr}</b>${pnlUsdStr}${rangeStr}`,
+    `TP: ${tpPct ?? "?"}% · SL: ${slPct ?? "?"}% · Trail: ${trailingEnabled ? "✅ on" : "❌ off"}`,
+  ];
+  if (posShort) lines.push(`Pos: ${posShort}`);
+  const text = lines.join("\n");
+
+  const keyboard = status === "closed"
+    ? [[{ text: "✅ Position closed", callback_data: "pos:noop" }]]
+    : [
+        [
+          { text: "🔴 Close", callback_data: `pos:close:${poolId}` },
+          { text: "🔄 Refresh", callback_data: `pos:refresh:${poolId}` },
+        ],
+        [
+          { text: `TP 3%${tpPct === 3 ? " ✓" : ""}`,  callback_data: `pos:tp:3:${poolId}` },
+          { text: `TP 5%${tpPct === 5 ? " ✓" : ""}`,  callback_data: `pos:tp:5:${poolId}` },
+          { text: `TP 10%${tpPct === 10 ? " ✓" : ""}`, callback_data: `pos:tp:10:${poolId}` },
+        ],
+        [
+          { text: `SL -10%${slPct === -10 ? " ✓" : ""}`, callback_data: `pos:sl:10:${poolId}` },
+          { text: `SL -20%${slPct === -20 ? " ✓" : ""}`, callback_data: `pos:sl:20:${poolId}` },
+          { text: `SL -30%${slPct === -30 ? " ✓" : ""}`, callback_data: `pos:sl:30:${poolId}` },
+        ],
+        [{ text: `Trail: ${trailingEnabled ? "ON ✅" : "OFF ❌"}`, callback_data: `pos:trail:${poolId}` }],
+      ];
+
+  return { text, keyboard };
+}
+
+export async function sendPositionCard({
+  pair, pool, position, deployAmount, pnlPct, pnlUsd,
+  inRange, mode, strategy, tpPct, slPct, trailingEnabled, paperId,
+}) {
+  if (!TOKEN || !chatId) return null;
+  const { text, keyboard } = buildPositionCard({
+    pair, pool, position, deployAmount, pnlPct, pnlUsd,
+    inRange, mode, strategy, tpPct, slPct, trailingEnabled,
+  });
+  const sent = await postTelegram("sendMessage", {
+    text,
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: keyboard },
+  });
+  const messageId = sent?.result?.message_id ?? null;
+  if (messageId && pool) {
+    _positionCards.set(pool, { messageId, paperId: paperId ?? null, positionAddress: position ?? null, pair, deployAmount, lastText: text });
+  }
+  return messageId;
+}
+
+export async function updatePositionCard(poolAddress, data) {
+  const card = _positionCards.get(poolAddress);
+  if (!card || !TOKEN || !chatId) return false;
+  const { text, keyboard } = buildPositionCard({ ...data, pool: poolAddress });
+  // Telegram rejects an edit that changes nothing ("message is not modified"),
+  // and the poller re-renders on every tick, so skip identical renders.
+  if (text === card.lastText) return true;
+  const res = await postTelegramRaw("editMessageText", {
+    chat_id: chatId,
+    message_id: card.messageId,
+    text,
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: keyboard },
+  });
+  if (res?.ok) card.lastText = text;
+  return !!res?.ok;
+}
+
+export function getPositionCard(poolAddress) {
+  return _positionCards.get(poolAddress) ?? null;
+}
+
+export function removePositionCard(poolAddress) {
+  _positionCards.delete(poolAddress);
+}
+
 export async function notifyOutOfRange({ pair, minutesOOR }) {
   if (hasActiveLiveMessage()) return;
   await sendHTML(

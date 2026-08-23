@@ -31,6 +31,9 @@ import {
   answerCallbackQuery,
   notifyOutOfRange,
   notifyPnlMove,
+  updatePositionCard,
+  getPositionCard,
+  removePositionCard,
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
@@ -48,7 +51,7 @@ import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnable
 import { appendDecision } from "./decision-log.js";
 
 import { REPO_ROOT, repoPath } from "./repo-root.js";
-import { evaluatePaperExits, tickPaperPositions } from "./paper-positions.js";
+import { evaluatePaperExits, tickPaperPositions, listPaperPositions, closePaperPosition } from "./paper-positions.js";
 
 const entrypointPath = process.env.pm_exec_path || process.argv[1];
 const indexPath = fileURLToPath(import.meta.url);
@@ -732,6 +735,182 @@ IMPORTANT:
   return screenReport;
 }
 
+/** Shape a live position (paper or real) into what buildPositionCard expects. */
+function positionCardData(found, cardMeta) {
+  const m = config.management ?? {};
+  const common = {
+    tpPct: m.takeProfitPct,
+    slPct: m.stopLossPct,
+    trailingEnabled: m.trailingTakeProfit,
+  };
+  if (found.type === "paper") {
+    const p = found.pos;
+    return {
+      ...common,
+      pair: cardMeta?.pair || p.pair,
+      position: cardMeta?.positionAddress || null,
+      deployAmount: cardMeta?.deployAmount ?? p.deposit_sol ?? p.deposit,
+      pnlPct: p.deposit > 0 ? Number(((p.net_pnl / p.deposit) * 100).toFixed(2)) : 0,
+      pnlUsd: Number((p.net_pnl ?? 0).toFixed(3)),
+      inRange: p.last_price >= p.range?.lower && p.last_price <= p.range?.upper,
+      mode: "dry_run",
+      strategy: p.strategy,
+      status: p.status,
+    };
+  }
+  const p = found.pos;
+  return {
+    ...common,
+    pair: p.pair,
+    position: p.position,
+    deployAmount: cardMeta?.deployAmount ?? p.deposit_sol ?? null,
+    pnlPct: p.pnl_pct,
+    pnlUsd: p.pnl_usd,
+    inRange: p.in_range,
+    mode: "live",
+    strategy: p.strategy || config.strategy?.strategy,
+    status: "open",
+  };
+}
+
+/** Resolve the live paper or real position backing a card. */
+async function findCardPosition(poolAddress) {
+  const papers = listPaperPositions().filter((p) => p.status === "open" && p.pool_address === poolAddress);
+  if (papers.length > 0) return { type: "paper", pos: papers[0] };
+  const live = await getMyPositions({ force: true, silent: true }).catch(() => null);
+  const real = live?.positions?.find((p) => p.pool === poolAddress);
+  return real ? { type: "real", pos: real } : null;
+}
+
+/**
+ * Handle the inline buttons on a position card (Close / Refresh / TP / SL / Trail).
+ *
+ * Note the TP/SL/Trail buttons write *global* config, not per-position settings —
+ * that is how the original worked and the config has no per-position override, so
+ * changing TP here changes it for every future position too.
+ */
+async function applyPositionCardCallback(msg, text) {
+  const parts = text.split(":");
+  const action = parts[1];
+
+  if (action === "noop") {
+    await answerCallbackQuery(msg.callbackQueryId);
+    return;
+  }
+
+  // The pool address is the tail. TP/SL carry a preset first: pos:tp:5:<pool>
+  const poolAddress = (action === "tp" || action === "sl")
+    ? parts.slice(3).join(":")
+    : parts.slice(2).join(":");
+  if (!poolAddress) {
+    await answerCallbackQuery(msg.callbackQueryId, "Missing position ID");
+    return;
+  }
+  const cardMeta = getPositionCard(poolAddress);
+
+  if (action === "refresh") {
+    await answerCallbackQuery(msg.callbackQueryId, "Refreshing...");
+    const found = await findCardPosition(poolAddress);
+    if (!found) {
+      await updatePositionCard(poolAddress, {
+        pair: cardMeta?.pair || "?", position: cardMeta?.positionAddress,
+        deployAmount: cardMeta?.deployAmount, pnlPct: null, inRange: null,
+        mode: "?", strategy: "?", tpPct: null, slPct: null,
+        trailingEnabled: false, status: "closed",
+      });
+      return;
+    }
+    await updatePositionCard(poolAddress, positionCardData(found, cardMeta));
+    return;
+  }
+
+  if (action === "close") {
+    await answerCallbackQuery(msg.callbackQueryId, "Closing...");
+    const found = await findCardPosition(poolAddress);
+    if (!found) {
+      await sendMessage(`❌ Position not found for pool ${poolAddress.slice(0, 8)}…`).catch(() => {});
+      removePositionCard(poolAddress);
+      return;
+    }
+    if (found.type === "paper") {
+      const closed = closePaperPosition(found.pos.id);
+      const pct = closed.deposit > 0 ? ((closed.net_pnl / closed.deposit) * 100).toFixed(2) : "?";
+      await updatePositionCard(poolAddress, { ...positionCardData({ type: "paper", pos: closed }, cardMeta), status: "closed" });
+      await sendMessage(`🔒 Closed paper position ${closed.pair}\nPnL: ${pct}% ($${(closed.net_pnl ?? 0).toFixed(3)})`).catch(() => {});
+    } else {
+      const result = await closePosition({ position_address: found.pos.position })
+        .catch((e) => ({ success: false, error: e.message }));
+      if (result.success) {
+        await updatePositionCard(poolAddress, {
+          ...positionCardData(found, cardMeta),
+          pnlPct: result.pnl_pct, pnlUsd: result.pnl_usd, status: "closed",
+        });
+        const cur = config.management.solMode ? "◎" : "$";
+        await sendMessage(`✅ Closed ${found.pos.pair}\nPnL: ${cur}${result.pnl_usd ?? "?"}`).catch(() => {});
+      } else {
+        await sendMessage(`❌ Close failed: ${result.error || JSON.stringify(result)}`).catch(() => {});
+      }
+    }
+    removePositionCard(poolAddress);
+    return;
+  }
+
+  if (action === "tp" || action === "sl") {
+    const preset = Number(parts[2]);             // tp: 3,5,10 | sl: 10,20,30 (magnitude)
+    const newVal = action === "tp" ? preset : -preset;
+    const key = action === "tp" ? "takeProfitPct" : "stopLossPct";
+    const result = await executeTool("update_config", { changes: { [key]: newVal }, reason: "Position card TP/SL button" });
+    if (!result?.success) {
+      await answerCallbackQuery(msg.callbackQueryId, "Update failed");
+      return;
+    }
+    await answerCallbackQuery(msg.callbackQueryId, `${action === "tp" ? "TP" : "SL"} → ${newVal}%`);
+    const found = await findCardPosition(poolAddress);
+    if (found) await updatePositionCard(poolAddress, positionCardData(found, cardMeta));
+    return;
+  }
+
+  if (action === "trail") {
+    const current = config.management?.trailingTakeProfit ?? false;
+    const result = await executeTool("update_config", { changes: { trailingTakeProfit: !current }, reason: "Position card trail toggle" });
+    if (!result?.success) {
+      await answerCallbackQuery(msg.callbackQueryId, "Update failed");
+      return;
+    }
+    await answerCallbackQuery(msg.callbackQueryId, `Trail → ${!current ? "ON" : "OFF"}`);
+    const found = await findCardPosition(poolAddress);
+    if (found) await updatePositionCard(poolAddress, positionCardData(found, cardMeta));
+    return;
+  }
+
+  await answerCallbackQuery(msg.callbackQueryId, "Unknown action");
+}
+
+const _cardRefreshAt = new Map();
+
+/**
+ * Keep an open position's card current from the fast poller, so the number the
+ * operator is looking at is live rather than whatever it was at deploy.
+ *
+ * Throttled hard: the poller runs every 2s, and editing the same message that
+ * often would hit Telegram's rate limit and get the edits dropped. The card is
+ * for watching, not for tick-level precision — the exit rules already run on
+ * every tick regardless of what the card shows.
+ */
+function maybeRefreshPositionCard(p) {
+  if (!p.pool || p.pnl_pct_suspicious) return;
+  const card = getPositionCard(p.pool);
+  if (!card) return;
+
+  const everyMs = Number(config.pnl.cardRefreshSec ?? 20) * 1000;
+  const last = _cardRefreshAt.get(p.pool) ?? 0;
+  const now = Date.now();
+  if (now - last < everyMs) return;
+  _cardRefreshAt.set(p.pool, now);
+
+  updatePositionCard(p.pool, positionCardData({ type: "real", pos: p }, card)).catch(() => {});
+}
+
 // Last PnL we alerted on, per position. Module-level rather than persisted: on a
 // restart the first tick of each position simply re-baselines, which is the
 // behaviour we want anyway.
@@ -846,6 +1025,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
         if (config.pnl.traceEnabled) tracePnlTick(p, getTrackedPosition(p.position));
 
         maybeAlertPnlMove(p, result.positions.indexOf(p) + 1);
+        maybeRefreshPositionCard(p);
 
         // Detect an exit signal this tick (rule-based exits, then deterministic close rules).
         const exit = updatePnlAndCheckExits(p.position, p, config.management);
@@ -1524,6 +1704,15 @@ async function telegramHandler(msg) {
   if (msg?.isCallback && text.startsWith("cfg:")) {
     try {
       await applySettingsMenuCallback(msg);
+    } catch (e) {
+      await answerCallbackQuery(msg.callbackQueryId, e.message).catch(() => {});
+    }
+    return;
+  }
+
+  if (msg?.isCallback && text.startsWith("pos:")) {
+    try {
+      await applyPositionCardCallback(msg, text);
     } catch (e) {
       await answerCallbackQuery(msg.callbackQueryId, e.message).catch(() => {});
     }

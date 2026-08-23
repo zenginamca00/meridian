@@ -268,6 +268,9 @@ export const config = {
     alertEnabled:        u.pnlAlertEnabled        ?? false,
     alertMovePct:        u.pnlAlertMovePct        ?? 2,   // poin PnL sejak alert terakhir
     alertMinIntervalSec: u.pnlAlertMinIntervalSec ?? 60,  // jeda minimum per posisi
+    // How often an open position's Telegram card is re-rendered. Kept well above
+    // the poll interval — editing the same message every 2s would be rate limited.
+    cardRefreshSec:      u.pnlCardRefreshSec      ?? 20,
   },
 
   // ─── Opportunity poller (catches strong pools between screening cycles) ──
