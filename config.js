@@ -147,6 +147,9 @@ export const config = {
     // to be a bad tick. Costs a poll interval otherwise; see KYOKO-SOL, which ran
     // +3% → +11% → -2% inside 21s and gave the peak back while confirming.
     // Set either to 0 to disable that fast path and always confirm.
+    // Minimum loss depth before a losing close cools the pool down. 0 = any loss
+    // (the old behaviour), which let a -0.02% close block a working pool for hours.
+    lossCooldownMinLossPct:   u.lossCooldownMinLossPct   ?? 0,
     fastExitMarginPct:        u.fastExitMarginPct        ?? 5,  // stop loss: fire at once this many points past stopLossPct
     fastExitDropMultiplier:   u.fastExitDropMultiplier   ?? 3,  // trailing TP: fire at once at this multiple of trailingDropPct
     // Fold the pre-close claim into the close itself (removeLiquidity already

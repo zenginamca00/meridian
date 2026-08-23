@@ -417,6 +417,7 @@ const toolMap = {
       // on-chain tx tuning
       priorityFeeMicroLamports: ["tx", "priorityFeeMicroLamports"],
       // fast-path exit confirmation
+      lossCooldownMinLossPct: ["management", "lossCooldownMinLossPct"],
       fastExitMarginPct: ["management", "fastExitMarginPct"],
       fastExitDropMultiplier: ["management", "fastExitDropMultiplier"],
       skipPreCloseClaim: ["management", "skipPreCloseClaim"],

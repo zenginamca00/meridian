@@ -237,7 +237,20 @@ export function recordPoolDeploy(poolAddress, deployData) {
   }
 
   const lossCooldownHours = Number(config.management.lossCooldownHours ?? 0);
-  if (lossCooldownHours > 0 && deploy.pnl_pct != null && deploy.pnl_pct < 0) {
+  // Only cool down on a loss deep enough to say something about the pool.
+  //
+  // Any negative number used to trigger the full cooldown, so a -0.02% close —
+  // usually "pumped far above range", i.e. price left upward and the position
+  // closed flat minus costs — locked the pool *and its token* out for hours.
+  // Over one week that was 16 such closes worth -$2.67 total, buying 64 hours of
+  // self-imposed blocking, mostly on pools that were working.
+  //
+  // abs() so the threshold reads the same whether it is written 1 or -1; the
+  // magnitude is what matters and the sign convention here is easy to get wrong.
+  const lossCooldownMinLossPct = Math.abs(Number(config.management.lossCooldownMinLossPct ?? 0));
+  const lossDeepEnough = deploy.pnl_pct != null && deploy.pnl_pct < 0
+    && Math.abs(deploy.pnl_pct) >= lossCooldownMinLossPct;
+  if (lossCooldownHours > 0 && lossDeepEnough) {
     const reason = `loss close (${Number(deploy.pnl_pct).toFixed(1)}%)`;
     const poolCooldownUntil = setPoolCooldown(entry, lossCooldownHours, reason);
     log("pool-memory", `Loss cooldown set for ${entry.name} until ${poolCooldownUntil} (${reason})`);
